@@ -8,8 +8,8 @@ import type {
 
 export class ObiguardApi implements ICredentialType {
 	name = 'obiguardApi';
-	displayName = 'ObiGuard API';
-	icon: Icon = 'file:obiguardapi.svg';
+	displayName = 'Obiguard API';
+	icon: Icon = 'file:obiguard.svg';
 	documentationUrl = 'https://docs.obiguard.ai';
 
 	properties: INodeProperties[] = [
