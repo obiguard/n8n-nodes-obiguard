@@ -22,11 +22,15 @@ export interface AgentDetails {
 		nid: string;
 		label: string;
 		systemPrompt: string;
-		messages: string[];
+		messages: Array<{ role: string; content: string }>;
 		temperature: number;
 		maxTokens: number;
 		stopSequences: string[];
 		variables: string[];
 	};
+	promptSummary:{
+		id: string;
+		name: string;
+	}
 	variables: string[];
 }

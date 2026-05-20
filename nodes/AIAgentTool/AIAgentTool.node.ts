@@ -9,8 +9,8 @@ import type {
 } from 'n8n-workflow';
 import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { toJsonSchema } from '@langchain/core/utils/json_schema';
-import { Agent, AgentDetails, AgentResponse } from './interaces';
-import { getInputs } from './utils';
+import { Agent, AgentDetails, AgentResponse } from './interafaces';
+import { getInputs, substituteVariables } from './utils';
 
 export class AiAgentTool implements INodeType {
 	description: INodeTypeDescription = {
@@ -38,7 +38,27 @@ export class AiAgentTool implements INodeType {
 				required: true,
 			},
 		],
+		builderHint: {
+			inputs: {
+				ai_memory: { required: false },
+				ai_tool: { required: false },
+				ai_outputParser: {
+					required: false,
+					displayOptions: { show: { hasOutputParser: [true] } },
+				},
+			},
+		},
 		properties: [
+			{
+				displayName: 'Description',
+				name: 'toolDescription',
+				type: 'string',
+				default: 'AI Agent that can call other tools',
+				required: true,
+				typeOptions: { rows: 2 },
+				description:
+					'Explain to the LLM what this tool does, a good, specific description would allow LLMs to produce expected results much more often',
+			},
 			{
 				displayName: 'AI Agent Name',
 				name: 'aiAgentId',
@@ -50,6 +70,23 @@ export class AiAgentTool implements INodeType {
 				},
 				default: '',
 				noDataExpression: true,
+			},
+			{
+				displayName: 'Prompt',
+				name: 'promptLabel',
+				type: 'options',
+				default: 'promptLabel',
+				noDataExpression: true,
+				typeOptions: {
+					loadOptionsDependsOn: ['aiAgentId'],
+					loadOptionsMethod: 'loadPromptLabel',
+				},
+				displayOptions: {
+					hide: {
+						aiAgentId: [''],
+					},
+				},
+				description: 'The active prompt version for the selected agent',
 			},
 			{
 				displayName: 'Variables',
@@ -134,6 +171,35 @@ export class AiAgentTool implements INodeType {
 				}
 			},
 
+			async loadPromptLabel(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const agentId = this.getCurrentNodeParameter('aiAgentId') as string;
+				if (!agentId) return [{ name: '—', value: 'none' }];
+
+				try {
+					const credentials = await this.getCredentials('obiguardApi');
+					const hostUrl = credentials.hostUrl as string;
+
+					const response = await this.helpers.httpRequestWithAuthentication.call(
+						this,
+						'obiguardApi',
+						{
+							method: 'GET',
+							url: `/v1/ai-agents/${agentId}`,
+							baseURL: hostUrl,
+							returnFullResponse: false,
+						},
+					);
+
+					const details = response as AgentDetails;
+					const summaryName = details.promptSummary?.name ?? '';
+					const versionLabel = details.promptVersion?.label ?? '';
+					const label = `${summaryName} (${versionLabel})`;
+					return [{ name: label || '(No prompt configured)', value: 'promptLabel' }];
+				} catch (error) {
+					return [{ name: '(Failed to load)', value: 'none' }];
+				}
+			},
+
 			async loadAgentSystemPrompt(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const agentId = this.getCurrentNodeParameter('aiAgentId') as string;
 				if (!agentId) return [];
@@ -214,7 +280,6 @@ export class AiAgentTool implements INodeType {
 		for (let i = 0; i < items.length; i++) {
 			try {
 				const aiAgentId = this.getNodeParameter('aiAgentId', i) as string;
-				// const text = this.getNodeParameter('text', i) as string;
 				const hasOutputParser = this.getNodeParameter('hasOutputParser', i, true) as boolean;
 				const credentials = await this.getCredentials('obiguardApi');
 				const hostUrl = credentials.hostUrl as string;
@@ -231,8 +296,72 @@ export class AiAgentTool implements INodeType {
 					}
 				}
 
+				const agentDetails = await this.helpers.httpRequestWithAuthentication.call(
+					this,
+					'obiguardApi',
+					{
+						method: 'GET',
+						url: `/v1/ai-agents/${aiAgentId}`,
+						baseURL: hostUrl,
+						returnFullResponse: false,
+					},
+				) as AgentDetails;
+				console.log('>>> agentDetails: ', agentDetails);
+
+				// Construct messages using promptVersion.
+				const messages: Array<{ role: string; content: string }> = [];
+				if (agentDetails.promptVersion?.systemPrompt) {
+					messages.push({
+						role: 'system',
+						content: substituteVariables(agentDetails.promptVersion.systemPrompt, variables),
+					});
+				}
+				for (const msg of agentDetails.promptVersion?.messages ?? []) {
+					messages.push({ role: msg.role, content: substituteVariables(msg.content, variables) });
+				}
+
+
+				// Read from memory and populate the chatHistory.
+				const memoryRaw = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, i);
+				const memory =
+					memoryRaw !== null &&
+					typeof memoryRaw === 'object' &&
+					'chatHistory' in memoryRaw &&
+					'saveContext' in memoryRaw
+						? (memoryRaw as {
+								chatHistory: {
+									getMessages(): Promise<
+										Array<{
+											_getType(): string;
+											content: string | Array<{ type: string; text?: string }>;
+										}>
+									>;
+								};
+								saveContext(
+									input: Record<string, string>,
+									output: Record<string, string>,
+								): Promise<void>;
+							})
+						: undefined;
+
+				let chatHistory: Array<{ role: string; content: string }> = [];
+				if (memory) {
+					const lcMessages = await memory.chatHistory.getMessages();
+					const roleMap: Record<string, string> = { human: 'user', ai: 'assistant' };
+					chatHistory = lcMessages.map((lcMsg) => ({
+						role: roleMap[lcMsg._getType()] ?? lcMsg._getType(),
+						content:
+							typeof lcMsg.content === 'string'
+								? lcMsg.content
+								: lcMsg.content
+										.filter((c) => c.type === 'text')
+										.map((c) => c.text ?? '')
+										.join(''),
+					}));
+				}
+
+				// Populate the output schema in the request
 				let outputSchema: object | undefined;
-				let formattingInstructions: string | undefined;
 				let parser: any | undefined;
 				if (hasOutputParser) {
 					const outputParser = await this.getInputConnectionData(
@@ -241,34 +370,120 @@ export class AiAgentTool implements INodeType {
 					);
 					if (outputParser) {
 						parser = outputParser as any;
-						formattingInstructions = parser.getFormatInstructions() as string;
 						if (parser.schema) {
 							outputSchema = toJsonSchema(parser.schema);
+						} else {
+							// Fallback: extract JSON schema from the markdown code block in
+							// formattingInstructions (LangChain embeds it there as ```json ... ```)
+							const instructions: string = parser.getFormatInstructions();
+							const match = instructions.match(/```json\n([\s\S]*?)\n```/);
+							if (match) {
+								try {
+									const parsed = JSON.parse(match[1]) as Record<string, unknown>;
+									delete parsed['$schema'];
+									outputSchema = parsed;
+								} catch {
+									// schema not extractable — proceed without structured output
+								}
+							}
 						}
 					}
 				}
 
-				const body = {
-					...(Object.keys(variables).length > 0 ? { variables } : {}),
-					...(outputSchema ? { outputSchema } : {}),
-					...(formattingInstructions ? { formattingInstructions } : {}),
-				};
-				const response = await this.helpers.httpRequestWithAuthentication.call(
-					this,
-					'obiguardApi',
-					{
-						method: 'POST',
-						url: `/v1/ai-agents/${aiAgentId}`,
-						baseURL: hostUrl,
-						body,
-						json: true,
-						returnFullResponse: false,
+				// Fetch all connected tools (one per inputIndex until none remain)
+				const lcTools: any[] = [];
+				for (let toolIdx = 0; ; toolIdx++) {
+					let toolRaw: unknown;
+					try {
+						toolRaw = await this.getInputConnectionData(NodeConnectionTypes.AiTool, i, toolIdx);
+					} catch {
+						break;
+					}
+					if (toolRaw === null || toolRaw === undefined) break;
+					if (Array.isArray(toolRaw)) lcTools.push(...toolRaw);
+					else lcTools.push(toolRaw);
+				}
+				const openAiTools = lcTools.map((t: any) => ({
+					type: 'function' as const,
+					function: {
+						name: t.name as string,
+						description: t.description as string,
+						parameters: t.schema
+							? toJsonSchema(t.schema)
+							: { type: 'object', properties: {}, additionalProperties: false },
 					},
-				);
+				}));
 
-				const completion = Array.isArray(response) ? response[0] : response;
-				const content = completion?.choices?.[0]?.message?.content ?? '';
+				// Merge chatHistory into messages upfront so the loop stays self-contained
+				const sysMessages = messages.filter((m) => m.role === 'system');
+				const nonSysMessages = messages.filter((m) => m.role !== 'system');
+				const currentMessages: any[] = [...sysMessages, ...chatHistory, ...nonSysMessages];
+
+				let content = '';
+				const MAX_TOOL_ITERATIONS = 10;
+
+				for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+					const body: Record<string, any> = {
+						messages: currentMessages,
+						...(openAiTools.length > 0 ? { tools: openAiTools, tool_choice: 'auto' } : {}),
+						...(outputSchema ? { outputSchema } : {}),
+					};
+					const response = await this.helpers.httpRequestWithAuthentication.call(
+						this,
+						'obiguardApi',
+						{
+							method: 'POST',
+							url: `/v1/ai-agents/${aiAgentId}`,
+							baseURL: hostUrl,
+							body,
+							json: true,
+							returnFullResponse: false,
+						},
+					);
+					const completion = Array.isArray(response) ? response[0] : response;
+					const choice = completion?.choices?.[0];
+
+					if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls?.length) {
+						currentMessages.push(choice.message);
+						for (const toolCall of choice.message.tool_calls as any[]) {
+							const tool = lcTools.find((t: any) => t.name === toolCall.function.name);
+							let toolResult: string;
+							if (tool) {
+								try {
+									const args = JSON.parse(toolCall.function.arguments ?? '{}') as unknown;
+									const result: unknown = tool.invoke
+									? await tool.invoke(args)
+									: await tool.call(typeof args === 'object' ? JSON.stringify(args) : args as string);
+									toolResult = typeof result === 'string' ? result : JSON.stringify(result);
+								} catch (e) {
+									toolResult = `Error: ${(e as Error).message}`;
+								}
+							} else {
+								toolResult = `Unknown tool: ${toolCall.function.name}`;
+							}
+							currentMessages.push({
+								role: 'tool',
+								content: toolResult,
+								tool_call_id: toolCall.id,
+							});
+						}
+					} else {
+						content = choice?.message?.content ?? '';
+						break;
+					}
+				}
+
 				const json = parser ? await parser.parse(content) : { output: content };
+
+				if (memory) {
+					try {
+						const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+						const inputSummary = lastUserMsg?.content ?? '(no input)';
+						await memory.saveContext({ input: inputSummary }, { output: content });
+					} catch (memErr) {
+						console.error('>>> memory.saveContext failed:', memErr);
+					}
+				}
 
 				returnData.push({
 					json,
