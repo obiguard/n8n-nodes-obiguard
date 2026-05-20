@@ -280,7 +280,7 @@ export class AiAgentTool implements INodeType {
 		for (let i = 0; i < items.length; i++) {
 			try {
 				const aiAgentId = this.getNodeParameter('aiAgentId', i) as string;
-				const hasOutputParser = this.getNodeParameter('hasOutputParser', i, true) as boolean;
+				const hasOutputParser = this.getNodeParameter('hasOutputParser', i, false) as boolean;
 				const credentials = await this.getCredentials('obiguardApi');
 				const hostUrl = credentials.hostUrl as string;
 
@@ -390,19 +390,9 @@ export class AiAgentTool implements INodeType {
 					}
 				}
 
-				// Fetch all connected tools (one per inputIndex until none remain)
-				const lcTools: any[] = [];
-				for (let toolIdx = 0; ; toolIdx++) {
-					let toolRaw: unknown;
-					try {
-						toolRaw = await this.getInputConnectionData(NodeConnectionTypes.AiTool, i, toolIdx);
-					} catch {
-						break;
-					}
-					if (toolRaw === null || toolRaw === undefined) break;
-					if (Array.isArray(toolRaw)) lcTools.push(...toolRaw);
-					else lcTools.push(toolRaw);
-				}
+				// Fetch all connected tools — single call returns all connections on the ai_tool port
+				const toolRaw = await this.getInputConnectionData(NodeConnectionTypes.AiTool, i);
+				const lcTools: any[] = Array.isArray(toolRaw) ? toolRaw : toolRaw ? [toolRaw] : [];
 				const openAiTools = lcTools.map((t: any) => ({
 					type: 'function' as const,
 					function: {
