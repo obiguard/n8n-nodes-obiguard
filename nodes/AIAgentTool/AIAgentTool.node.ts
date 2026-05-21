@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import type {
 	IExecuteFunctions,
 	ILoadOptionsFunctions,
@@ -409,6 +410,9 @@ export class AiAgentTool implements INodeType {
 				const nonSysMessages = messages.filter((m) => m.role !== 'system');
 				const currentMessages: any[] = [...sysMessages, ...chatHistory, ...nonSysMessages];
 
+				const requestId = randomUUID();
+				const traceId = requestId.replace(/-/g, '');
+				const traceparent = `00-${traceId}-${traceId.slice(0, 16)}-01`;
 				let content = '';
 				const MAX_TOOL_ITERATIONS = 10;
 
@@ -425,6 +429,7 @@ export class AiAgentTool implements INodeType {
 							method: 'POST',
 							url: `/v1/ai-agents/${aiAgentId}`,
 							baseURL: hostUrl,
+							headers: { 'x-request-id': requestId, traceparent },
 							body,
 							json: true,
 							returnFullResponse: false,
