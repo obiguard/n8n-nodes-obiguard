@@ -200,36 +200,6 @@ export class AiAgentTool implements INodeType {
 					return [{ name: '(Failed to load)', value: 'none' }];
 				}
 			},
-
-			async loadAgentSystemPrompt(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const agentId = this.getCurrentNodeParameter('aiAgentId') as string;
-				if (!agentId) return [];
-
-				try {
-					const credentials = await this.getCredentials('obiguardApi');
-					const hostUrl = credentials.hostUrl as string;
-
-					const response = await this.helpers.httpRequestWithAuthentication.call(
-						this,
-						'obiguardApi',
-						{
-							method: 'GET',
-							url: `/v1/ai-agents/${agentId}`,
-							baseURL: hostUrl,
-							returnFullResponse: false,
-						},
-					);
-
-					const details = response as AgentDetails;
-					const prompt = details.promptVersion?.systemPrompt ?? '';
-					// Fixed value so the field always shows as selected; name carries the actual text
-					return [{ name: prompt || '(No prompt configured)', value: 'systemPrompt' }];
-				} catch (error) {
-					throw new NodeOperationError(this.getNode(), error as Error, {
-						message: 'Failed to load agent details',
-					});
-				}
-			},
 		},
 
 		resourceMapping: {
