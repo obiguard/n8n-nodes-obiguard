@@ -3,13 +3,13 @@
 	"version": "0.1.0",
 	"description": "ObiGuard community node for n8n",
 	"license": "MIT",
-	"homepage": "",
+	"homepage": "https://github.com/obiguard/n8n-nodes-obiguard",
 	"keywords": [
 		"n8n-community-node-package"
 	],
 	"author": {
-		"name": "james",
-		"email": "james@obiguard.com"
+		"name": "Obiguard",
+		"email": "support@obiguard.com"
 	},
 	"repository": {
 		"type": "git",
@@ -34,7 +34,6 @@
 			"dist/credentials/ObiguardApi.credentials.js"
 		],
 		"nodes": [
-			"dist/nodes/Example/Example.node.js",
 			"dist/nodes/GetResources/GetResources.node.js",
 			"dist/nodes/AIAgentTool/AiAgentTool.node.js"
 		]

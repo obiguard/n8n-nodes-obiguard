@@ -16,7 +16,6 @@ import {
 export function getInputs(
 	hasMainInput?: boolean,
 	hasOutputParser?: boolean,
-	needsFallback?: boolean,
 ): Array<NodeConnectionType | INodeInputConfiguration> {
 
 	interface SpecialInput {

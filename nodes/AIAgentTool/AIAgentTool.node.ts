@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import type {
+	IDataObject,
 	IExecuteFunctions,
 	ILoadOptionsFunctions,
 	INodeExecutionData,
@@ -9,9 +10,83 @@ import type {
 	ResourceMapperFields,
 } from 'n8n-workflow';
 import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-import { toJsonSchema } from '@langchain/core/utils/json_schema';
-import { Agent, AgentDetails, AgentResponse } from './interafaces';
+import { Agent, AgentDetails, AgentResponse } from './interfaces';
 import { getInputs, substituteVariables } from './utils';
+
+interface OutputParser {
+	schema?: unknown;
+	getFormatInstructions(): string;
+	parse(content: string): Promise<Record<string, unknown>>;
+}
+
+interface LcTool {
+	name: string;
+	description: string;
+	schema?: unknown;
+	invoke?(args: unknown): Promise<unknown>;
+	call?(args: string): Promise<unknown>;
+}
+
+interface ToolCall {
+	id: string;
+	function: { name: string; arguments: string };
+}
+
+interface CompletionChoice {
+	finish_reason: string;
+	message: { content?: string; tool_calls?: ToolCall[] };
+}
+
+type ChatMessage = { role: string; content: string; tool_calls?: ToolCall[]; tool_call_id?: string };
+
+function zodToJsonSchemaInline(schema: unknown): Record<string, unknown> {
+	if (!schema || typeof schema !== 'object') return {};
+	const s = schema as {
+		_def?: {
+			typeName?: string;
+			shape?: () => Record<string, unknown>;
+			type?: unknown;
+			innerType?: unknown;
+			options?: unknown[];
+			description?: string;
+			value?: unknown;
+		};
+	};
+	if (!s._def?.typeName) return schema as Record<string, unknown>;
+	const base: Record<string, unknown> = s._def.description ? { description: s._def.description } : {};
+	switch (s._def.typeName) {
+		case 'ZodObject': {
+			const shape = s._def.shape?.() ?? {};
+			const properties: Record<string, unknown> = {};
+			const required: string[] = [];
+			for (const [key, val] of Object.entries(shape)) {
+				properties[key] = zodToJsonSchemaInline(val);
+				const v = val as { _def?: { typeName?: string } };
+				if (v._def?.typeName !== 'ZodOptional' && v._def?.typeName !== 'ZodNullable') {
+					required.push(key);
+				}
+			}
+			return { ...base, type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false };
+		}
+		case 'ZodString':
+			return { ...base, type: 'string' };
+		case 'ZodNumber':
+			return { ...base, type: 'number' };
+		case 'ZodBoolean':
+			return { ...base, type: 'boolean' };
+		case 'ZodArray':
+			return { ...base, type: 'array', items: zodToJsonSchemaInline(s._def.type) };
+		case 'ZodOptional':
+		case 'ZodNullable':
+			return zodToJsonSchemaInline(s._def.innerType ?? s._def.type);
+		case 'ZodEnum':
+			return { ...base, type: 'string', enum: s._def.options };
+		case 'ZodLiteral':
+			return { type: typeof s._def.value, enum: [s._def.value] };
+		default:
+			return base;
+	}
+}
 
 export class AiAgentTool implements INodeType {
 	description: INodeTypeDescription = {
@@ -61,11 +136,11 @@ export class AiAgentTool implements INodeType {
 					'Explain to the LLM what this tool does, a good, specific description would allow LLMs to produce expected results much more often',
 			},
 			{
-				displayName: 'AI Agent Name',
+				displayName: 'AI Agent Name or ID',
 				name: 'aiAgentId',
 				type: 'options',
 				required: true,
-				description: 'Select an AI agent from the list.',
+				description: 'Select an AI agent from the list. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 				typeOptions: {
 					loadOptionsMethod: 'loadAgents',
 				},
@@ -73,7 +148,7 @@ export class AiAgentTool implements INodeType {
 				noDataExpression: true,
 			},
 			{
-				displayName: 'Prompt',
+				displayName: 'Prompt Name or ID',
 				name: 'promptLabel',
 				type: 'options',
 				default: 'promptLabel',
@@ -87,7 +162,7 @@ export class AiAgentTool implements INodeType {
 						aiAgentId: [''],
 					},
 				},
-				description: 'The active prompt version for the selected agent',
+				description: 'The active prompt version for the selected agent. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
 			{
 				displayName: 'Variables',
@@ -196,8 +271,8 @@ export class AiAgentTool implements INodeType {
 					const versionLabel = details.promptVersion?.label ?? '';
 					const label = `${summaryName} (${versionLabel})`;
 					return [{ name: label || '(No prompt configured)', value: 'promptLabel' }];
-				} catch (error) {
-					return [{ name: '(Failed to load)', value: 'none' }];
+				} catch {
+					return [{ name: '(Failed to Load)', value: 'none' }];
 				}
 			},
 		},
@@ -237,7 +312,7 @@ export class AiAgentTool implements INodeType {
 							display: true,
 						})),
 					};
-				} catch (error) {
+				} catch {
 					return { fields: [] };
 				}
 			},
@@ -277,10 +352,9 @@ export class AiAgentTool implements INodeType {
 						returnFullResponse: false,
 					},
 				) as AgentDetails;
-				console.log('>>> agentDetails: ', agentDetails);
 
 				// Construct messages using promptVersion.
-				const messages: Array<{ role: string; content: string }> = [];
+				const messages: ChatMessage[] = [];
 				if (agentDetails.promptVersion?.systemPrompt) {
 					messages.push({
 						role: 'system',
@@ -290,7 +364,6 @@ export class AiAgentTool implements INodeType {
 				for (const msg of agentDetails.promptVersion?.messages ?? []) {
 					messages.push({ role: msg.role, content: substituteVariables(msg.content, variables) });
 				}
-
 
 				// Read from memory and populate the chatHistory.
 				const memoryRaw = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, i);
@@ -315,7 +388,7 @@ export class AiAgentTool implements INodeType {
 							})
 						: undefined;
 
-				let chatHistory: Array<{ role: string; content: string }> = [];
+				let chatHistory: ChatMessage[] = [];
 				if (memory) {
 					const lcMessages = await memory.chatHistory.getMessages();
 					const roleMap: Record<string, string> = { human: 'user', ai: 'assistant' };
@@ -332,17 +405,17 @@ export class AiAgentTool implements INodeType {
 				}
 
 				// Populate the output schema in the request
-				let outputSchema: object | undefined;
-				let parser: any | undefined;
+				let outputSchema: Record<string, unknown> | undefined;
+				let parser: OutputParser | undefined;
 				if (hasOutputParser) {
 					const outputParser = await this.getInputConnectionData(
 						NodeConnectionTypes.AiOutputParser,
 						i,
 					);
 					if (outputParser) {
-						parser = outputParser as any;
+						parser = outputParser as OutputParser;
 						if (parser.schema) {
-							outputSchema = toJsonSchema(parser.schema);
+							outputSchema = zodToJsonSchemaInline(parser.schema);
 						} else {
 							// Fallback: extract JSON schema from the markdown code block in
 							// formattingInstructions (LangChain embeds it there as ```json ... ```)
@@ -363,14 +436,14 @@ export class AiAgentTool implements INodeType {
 
 				// Fetch all connected tools — single call returns all connections on the ai_tool port
 				const toolRaw = await this.getInputConnectionData(NodeConnectionTypes.AiTool, i);
-				const lcTools: any[] = Array.isArray(toolRaw) ? toolRaw : toolRaw ? [toolRaw] : [];
-				const openAiTools = lcTools.map((t: any) => ({
+				const lcTools: LcTool[] = Array.isArray(toolRaw) ? toolRaw as LcTool[] : toolRaw ? [toolRaw as LcTool] : [];
+				const openAiTools = lcTools.map((t: LcTool) => ({
 					type: 'function' as const,
 					function: {
-						name: t.name as string,
-						description: t.description as string,
+						name: t.name,
+						description: t.description,
 						parameters: t.schema
-							? toJsonSchema(t.schema)
+							? zodToJsonSchemaInline(t.schema)
 							: { type: 'object', properties: {}, additionalProperties: false },
 					},
 				}));
@@ -378,7 +451,7 @@ export class AiAgentTool implements INodeType {
 				// Merge chatHistory into messages upfront so the loop stays self-contained
 				const sysMessages = messages.filter((m) => m.role === 'system');
 				const nonSysMessages = messages.filter((m) => m.role !== 'system');
-				const currentMessages: any[] = [...sysMessages, ...chatHistory, ...nonSysMessages];
+				const currentMessages: ChatMessage[] = [...sysMessages, ...chatHistory, ...nonSysMessages];
 
 				const requestId = randomUUID();
 				const traceId = requestId.replace(/-/g, '');
@@ -387,7 +460,7 @@ export class AiAgentTool implements INodeType {
 				const MAX_TOOL_ITERATIONS = 10;
 
 				for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-					const body: Record<string, any> = {
+					const body: Record<string, unknown> = {
 						messages: currentMessages,
 						...(openAiTools.length > 0 ? { tools: openAiTools, tool_choice: 'auto' } : {}),
 						...(outputSchema ? { outputSchema } : {}),
@@ -405,20 +478,26 @@ export class AiAgentTool implements INodeType {
 							returnFullResponse: false,
 						},
 					);
-					const completion = Array.isArray(response) ? response[0] : response;
-					const choice = completion?.choices?.[0];
+					const completion = Array.isArray(response)
+						? (response as CompletionChoice[][])[0]
+						: (response as { choices?: CompletionChoice[] });
+					const choice: CompletionChoice | undefined = Array.isArray(completion)
+						? (completion as CompletionChoice[])[0]
+						: (completion as { choices?: CompletionChoice[] }).choices?.[0];
 
 					if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls?.length) {
-						currentMessages.push(choice.message);
-						for (const toolCall of choice.message.tool_calls as any[]) {
-							const tool = lcTools.find((t: any) => t.name === toolCall.function.name);
+						currentMessages.push(choice.message as ChatMessage);
+						for (const toolCall of choice.message.tool_calls) {
+							const tool = lcTools.find((t: LcTool) => t.name === toolCall.function.name);
 							let toolResult: string;
 							if (tool) {
 								try {
 									const args = JSON.parse(toolCall.function.arguments ?? '{}') as unknown;
 									const result: unknown = tool.invoke
 									? await tool.invoke(args)
-									: await tool.call(typeof args === 'object' ? JSON.stringify(args) : args as string);
+									: tool.call
+									? await tool.call(typeof args === 'object' ? JSON.stringify(args) : args as string)
+									: 'Tool invocation not supported';
 									toolResult = typeof result === 'string' ? result : JSON.stringify(result);
 								} catch (e) {
 									toolResult = `Error: ${(e as Error).message}`;
@@ -445,13 +524,13 @@ export class AiAgentTool implements INodeType {
 						const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
 						const inputSummary = lastUserMsg?.content ?? '(no input)';
 						await memory.saveContext({ input: inputSummary }, { output: content });
-					} catch (memErr) {
-						console.error('>>> memory.saveContext failed:', memErr);
+					} catch {
+						// memory persistence is best-effort
 					}
 				}
 
 				returnData.push({
-					json,
+					json: json as IDataObject,
 					pairedItem: { item: i },
 				});
 			} catch (error) {
