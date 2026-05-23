@@ -3,7 +3,7 @@ stages:
   - publish
 
 default:
-  image: node:20-alpine
+  image: node:22
 
 # ── Build ────────────────────────────────────────────────────────────────────
 # Runs on every push to main. Lint + compile + publish to GitLab registry.
@@ -48,7 +48,6 @@ publish:
   before_script:
     - npm ci
     - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN_OBIGUARD}" > ~/.npmrc
-    - apk add --no-cache git openssh-client
     - git config user.name "Obiguard CI"
     - git config user.email "support@obiguard.com"
   script:
