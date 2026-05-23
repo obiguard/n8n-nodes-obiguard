@@ -29,11 +29,11 @@ build:
 
 # ── Publish ──────────────────────────────────────────────────────────────────
 # Manual gate. Requires the build job to have passed.
-# Publishes to npm, then creates a git tag and pushes ONLY that tag to GitHub.
-# Intermediate commits on main are never pushed to GitHub.
+# Creates a git tag and pushes ONLY that tag to GitHub.
+# GitHub Actions (.github/workflows/publish.yml) then handles npm publish
+# with provenance, triggered by the tag push.
 #
 # Required CI/CD variables (Settings → CI/CD → Variables):
-#   NPM_TOKEN    — npm access token (Automation type, mark as masked)
 #   GITHUB_TOKEN — GitHub personal access token with repo scope (mark as masked)
 publish:
   stage: publish
@@ -47,25 +47,19 @@ publish:
     # Fetch full history so git tag works cleanly
     GIT_DEPTH: 0
   before_script:
-    - npm ci
-    - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN_OBIGUARD}" > ~/.npmrc
     - git config user.name "Obiguard CI"
     - git config user.email "support@obiguard.com"
   script:
-    # Publish to npm. --ignore-scripts skips prepublishOnly since dist/ is
-    # already built and validated by the build job above.
-    # --access public is required for scoped packages (@obiguard/...) which
-    # default to private on npm without it.
-    - npm publish --ignore-scripts --access public
-
-    # Tag the commit that was just released
+    # Tag the commit to be released
     - VERSION=$(node -p "require('./package.json').version")
     - TAG="v${VERSION}"
     - git tag -a "${TAG}" -m "Release ${TAG}" HEAD
 
-    # Push only the tag to GitHub — no branch history is pushed
+    # Push only the tag to GitHub — no branch history is pushed.
+    # This triggers the GitHub Actions publish workflow which publishes
+    # to npm with provenance.
     - git remote add github "https://x-access-token:${GITHUB_TOKEN}@github.com/obiguard/n8n-nodes-obiguard.git"
     - git push github "${TAG}"
   environment:
     name: npm
-    url: https://www.npmjs.com/package/n8n-nodes-obiguard
+    url: https://www.npmjs.com/package/@obiguard/n8n-nodes-obiguard
