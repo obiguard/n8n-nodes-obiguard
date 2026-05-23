@@ -50,7 +50,7 @@ publish:
     # Push source to GitHub. This triggers the GitHub Actions publish
     # workflow which publishes to npm with provenance.
     - git remote add github "https://x-access-token:${GITHUB_TOKEN}@github.com/obiguard/n8n-nodes-obiguard.git"
-    - git push github HEAD:main
+    - git push github HEAD:refs/heads/main
   environment:
     name: npm
     url: https://www.npmjs.com/package/@obiguard/n8n-nodes-obiguard
