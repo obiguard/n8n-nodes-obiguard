@@ -11,6 +11,10 @@ dist/
 .env
 .env.*
 
+# Internal AI assistant instructions
+.agents/
+.claude/
+
 # IDE
 .idea/
 .vscode/
