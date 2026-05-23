@@ -1,6 +1,6 @@
 {
 	"name": "@obiguard/n8n-nodes-obiguard",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Obiguard community node for n8n",
 	"license": "MIT",
 	"homepage": "https://github.com/obiguard/n8n-nodes-obiguard",
