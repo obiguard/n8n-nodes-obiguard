@@ -20,6 +20,7 @@ build:
     - npm ci
     - npm run lint
     - npm run build
+    - echo "${CI_API_V4_URL#*:}/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=${CI_JOB_TOKEN}" >> ~/.npmrc
     - npm publish --ignore-scripts --registry "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
   artifacts:
     paths:
