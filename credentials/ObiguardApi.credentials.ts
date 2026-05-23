@@ -17,8 +17,7 @@ export class ObiguardApi implements ICredentialType {
 			displayName: 'Host URL',
 			name: 'hostUrl',
 			type: 'string',
-			default: '',
-			placeholder: 'https://gateway.obiguard.com',
+			default: 'https://gateway.obiguard.ai',
 		},
 		{
 			displayName: 'Access Key',

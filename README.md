@@ -1,6 +1,6 @@
 # n8n-nodes-obiguard
 
-This is an n8n community node. It lets you use [Obiguard](https://obiguard.com) in your n8n workflows.
+This is an n8n community node. It lets you use [Obiguard](https://obiguard.ai) in your n8n workflows.
 
 Obiguard is an AI risk governance platform that lets you deploy, manage, and invoke AI agents with built-in prompt versioning, variable substitution, and observability.
 
@@ -44,7 +44,7 @@ You will need an Obiguard account and an API access key.
 3. In your **Project**, set up your **AI Use Case**, **Prompt**, and ** AI Agent**.
 2. Navigate to **Access Keys** and create a new access key.
 3. In n8n, create a new **Obiguard API** credential and fill in:
-   - **Host URL** — the base URL of your Obiguard gateway, e.g. `https://gateway.obiguard.com`
+   - **Host URL** — the base URL of your Obiguard gateway, e.g. `https://gateway.obiguard.ai`
    - **Access Key** — the API key you generated above
 
 The credential sends the key as the `x-obiguard-api-key` request header on every call.
