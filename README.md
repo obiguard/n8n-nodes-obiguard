@@ -17,7 +17,7 @@ Obiguard is an AI risk governance platform that lets you deploy, manage, and inv
 
 Follow the [installation guide](https://docs.n8n.io/integrations/community-nodes/installation/) in the n8n community nodes documentation.
 
-The package name is `n8n-nodes-obiguard`.
+The package name is `@obiguard/n8n-nodes-obiguard`.
 
 ## Operations
 
