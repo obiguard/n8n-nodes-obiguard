@@ -99,7 +99,6 @@ export class AiAgentTool implements INodeType {
 		defaults: {
 			name: 'Obiguard AI Agent',
 		},
-		// inputs: [NodeConnectionTypes.Main],
 		inputs: `={{
 				((hasOutputParser, needsFallback) => {
 					${getInputs.toString()};

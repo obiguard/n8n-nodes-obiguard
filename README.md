@@ -21,10 +21,6 @@ The package name is `@obiguard/n8n-nodes-obiguard`.
 
 ## Operations
 
-### Get Resources
-
-Retrieves the list of available AI agents from your Obiguard instance. Returns the full agent catalogue so you can inspect which agents are available without invoking them.
-
 ### Obiguard AI Agent
 
 Invokes a selected AI agent and returns its response. Supports:

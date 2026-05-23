@@ -34,7 +34,6 @@
 			"dist/credentials/ObiguardApi.credentials.js"
 		],
 		"nodes": [
-			"dist/nodes/GetResources/GetResources.node.js",
 			"dist/nodes/AIAgentTool/AiAgentTool.node.js"
 		]
 	},
