@@ -37,7 +37,7 @@ You will need an Obiguard account and an API access key.
 1. Log in to your Obiguard instance
 2. Create an **Organization** and a **Project**.
 3. In your **Organization**, set up your **Environment** and **AI Providers**.
-3. In your **Project**, set up your **AI Use Case**, **Prompt**, and ** AI Agent**.
+3. In your **Project**, set up your **AI Use Case**, **Prompt**, and **AI Agent**.
 2. Navigate to **Access Keys** and create a new access key.
 3. In n8n, create a new **Obiguard API** credential and fill in:
    - **Host URL** — the base URL of your Obiguard gateway, e.g. `https://gateway.obiguard.ai`
