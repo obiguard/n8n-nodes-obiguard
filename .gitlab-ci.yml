@@ -43,23 +43,14 @@ publish:
   needs:
     - job: build
       artifacts: true
-  variables:
-    # Fetch full history so git tag works cleanly
-    GIT_DEPTH: 0
   before_script:
     - git config user.name "Obiguard CI"
     - git config user.email "support@obiguard.com"
   script:
-    # Tag the commit to be released
-    - VERSION=$(node -p "require('./package.json').version")
-    - TAG="v${VERSION}"
-    - git tag -a "${TAG}" -m "Release ${TAG}" HEAD
-
-    # Push only the tag to GitHub — no branch history is pushed.
-    # This triggers the GitHub Actions publish workflow which publishes
-    # to npm with provenance.
+    # Push source to GitHub. This triggers the GitHub Actions publish
+    # workflow which publishes to npm with provenance.
     - git remote add github "https://x-access-token:${GITHUB_TOKEN}@github.com/obiguard/n8n-nodes-obiguard.git"
-    - git push github "${TAG}"
+    - git push github HEAD:main
   environment:
     name: npm
     url: https://www.npmjs.com/package/@obiguard/n8n-nodes-obiguard
