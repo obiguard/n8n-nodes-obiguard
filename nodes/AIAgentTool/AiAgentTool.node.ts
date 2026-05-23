@@ -93,9 +93,10 @@ export class AiAgentTool implements INodeType {
 		displayName: 'Obiguard AI Agent',
 		name: 'aiAgentTool',
 		icon: 'file:obiguard.svg',
-		group: ['input'],
-		version: [1],
-		description: 'Retrieve details for a selected AI agent',
+		group: ['transform'],
+		version: 1,
+		description: 'Invoke an Obiguard AI agent and return its response',
+		subtitle: '={{$parameter.aiAgentId}}',
 		defaults: {
 			name: 'Obiguard AI Agent',
 		},
@@ -128,7 +129,7 @@ export class AiAgentTool implements INodeType {
 				displayName: 'Description',
 				name: 'toolDescription',
 				type: 'string',
-				default: 'AI Agent that can call other tools',
+				default: 'Invokes an Obiguard AI agent with the given prompt and returns its response',
 				required: true,
 				typeOptions: { rows: 2 },
 				description:

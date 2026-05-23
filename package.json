@@ -3,7 +3,7 @@
 	"version": "0.2.6",
 	"description": "Obiguard community node for n8n",
 	"license": "MIT",
-	"homepage": "https://github.com/obiguard/n8n-nodes-obiguard",
+	"homepage": "https://obiguard.ai",
 	"keywords": [
 		"n8n-community-node-package"
 	],
