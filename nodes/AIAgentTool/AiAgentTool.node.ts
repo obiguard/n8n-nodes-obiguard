@@ -434,9 +434,23 @@ export class AiAgentTool implements INodeType {
 					}
 				}
 
-				// Fetch all connected tools — single call returns all connections on the ai_tool port
+				// Fetch all connected tools — single call returns all connections on the ai_tool port.
+				// Each item may be a plain LcTool or a StructuredToolkit (e.g. from mcpClientTool),
+				// which wraps multiple tools behind getTools()/tools[]. Expand toolkits inline.
 				const toolRaw = await this.getInputConnectionData(NodeConnectionTypes.AiTool, i);
-				const lcTools: LcTool[] = Array.isArray(toolRaw) ? toolRaw as LcTool[] : toolRaw ? [toolRaw as LcTool] : [];
+				const rawArray: unknown[] = Array.isArray(toolRaw) ? toolRaw : toolRaw ? [toolRaw] : [];
+				const lcTools: LcTool[] = rawArray.flatMap((item) => {
+					if (item && typeof item === 'object') {
+						const asToolkit = item as { getTools?: () => LcTool[]; tools?: LcTool[] };
+						if (typeof asToolkit.getTools === 'function') {
+							return asToolkit.getTools();
+						}
+						if (Array.isArray(asToolkit.tools)) {
+							return asToolkit.tools;
+						}
+					}
+					return [item as LcTool];
+				});
 				const openAiTools = lcTools.map((t: LcTool) => ({
 					type: 'function' as const,
 					function: {
