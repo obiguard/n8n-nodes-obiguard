@@ -37,7 +37,57 @@ interface CompletionChoice {
 	message: { content?: string; tool_calls?: ToolCall[] };
 }
 
+type SelectedAgent = {
+	id: string;
+	name?: string;
+};
+
 type ChatMessage = { role: string; content: string; tool_calls?: ToolCall[]; tool_call_id?: string };
+
+function parseSelectedAgent(value: string): SelectedAgent {
+	if (!value) return { id: '' };
+
+	// New format: "<id>:::<name>"
+	if (value.includes(':::')) {
+		const [id, ...nameParts] = value.split(':::');
+		return {
+			id,
+			name: nameParts.join(':::') || undefined,
+		};
+	}
+
+	// Legacy format from earlier implementation: JSON string
+	if (value.trim().startsWith('{')) {
+		try {
+			const parsed = JSON.parse(value) as Partial<SelectedAgent>;
+			if (typeof parsed?.id === 'string' && parsed.id.length > 0) {
+				return {
+					id: parsed.id,
+					name: typeof parsed.name === 'string' ? parsed.name : undefined,
+				};
+			}
+		} catch {
+			// Ignore parse failures and fall back to raw ID.
+		}
+	}
+
+	// Backward compatibility: older saved nodes may only have a raw ID string.
+	return { id: value };
+}
+
+function toSelectedAgentValue(agent: Agent): string {
+	const name = agent.name || agent.id;
+	return `${agent.id}:::${name}`;
+}
+
+function selectedAgentId(value: string): string {
+	return parseSelectedAgent(value).id;
+}
+
+function selectedAgentNameOrId(value: string): string {
+	const selected = parseSelectedAgent(value);
+	return selected.name || selected.id;
+}
 
 function zodToJsonSchemaInline(schema: unknown): Record<string, unknown> {
 	if (!schema || typeof schema !== 'object') return {};
@@ -96,7 +146,8 @@ export class AiAgentTool implements INodeType {
 		group: ['transform'],
 		version: 1,
 		description: 'Invoke an Obiguard AI agent and return its response',
-		subtitle: '={{$parameter.aiAgentId}}',
+		subtitle:
+			'={{ $parameter.aiAgentId && $parameter.aiAgentId.includes(":::") ? $parameter.aiAgentId.split(":::").slice(1).join(":::") : ($parameter.aiAgentId && $parameter.aiAgentId[0] === "{" ? ($parameter.aiAgentId.match(/"name":"([^"]+)"/)?.[1] || $parameter.aiAgentId.match(/"id":"([^"]+)"/)?.[1] || $parameter.aiAgentId) : $parameter.aiAgentId) }}',
 		defaults: {
 			name: 'Obiguard AI Agent',
 		},
@@ -140,7 +191,7 @@ export class AiAgentTool implements INodeType {
 				name: 'aiAgentId',
 				type: 'options',
 				required: true,
-				description: 'Select an AI agent from the list. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+				description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 				typeOptions: {
 					loadOptionsMethod: 'loadAgents',
 				},
@@ -236,8 +287,8 @@ export class AiAgentTool implements INodeType {
 					const agents: Agent[] = (response as AgentResponse).agents || [];
 
 					const options = agents.map((agent: Agent) => ({
-						name: agent.name || agent.id,
-						value: agent.id,
+						name: selectedAgentNameOrId(toSelectedAgentValue(agent)),
+						value: toSelectedAgentValue(agent),
 					}));
 					return options;
 				} catch (error) {
@@ -248,7 +299,8 @@ export class AiAgentTool implements INodeType {
 			},
 
 			async loadPromptLabel(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const agentId = this.getCurrentNodeParameter('aiAgentId') as string;
+				const selectedAgent = this.getCurrentNodeParameter('aiAgentId') as string;
+				const agentId = selectedAgentId(selectedAgent);
 				if (!agentId) return [{ name: '—', value: 'none' }];
 
 				try {
@@ -279,7 +331,8 @@ export class AiAgentTool implements INodeType {
 
 		resourceMapping: {
 			async loadAgentVariables(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
-				const agentId = this.getCurrentNodeParameter('aiAgentId') as string;
+				const selectedAgent = this.getCurrentNodeParameter('aiAgentId') as string;
+				const agentId = selectedAgentId(selectedAgent);
 				if (!agentId) return { fields: [] };
 
 				try {
@@ -325,7 +378,8 @@ export class AiAgentTool implements INodeType {
 
 		for (let i = 0; i < items.length; i++) {
 			try {
-				const aiAgentId = this.getNodeParameter('aiAgentId', i) as string;
+				const selectedAgent = this.getNodeParameter('aiAgentId', i) as string;
+				const aiAgentId = selectedAgentId(selectedAgent);
 				const hasOutputParser = this.getNodeParameter('hasOutputParser', i, false) as boolean;
 				const credentials = await this.getCredentials('obiguardApi');
 				const hostUrl = credentials.hostUrl as string;
@@ -342,7 +396,7 @@ export class AiAgentTool implements INodeType {
 					}
 				}
 
-				const agentDetails = await this.helpers.httpRequestWithAuthentication.call(
+				const agentDetails = (await this.helpers.httpRequestWithAuthentication.call(
 					this,
 					'obiguardApi',
 					{
@@ -351,7 +405,7 @@ export class AiAgentTool implements INodeType {
 						baseURL: hostUrl,
 						returnFullResponse: false,
 					},
-				) as AgentDetails;
+				)) as AgentDetails;
 
 				// Construct messages using promptVersion.
 				const messages: ChatMessage[] = [];
@@ -508,10 +562,12 @@ export class AiAgentTool implements INodeType {
 								try {
 									const args = JSON.parse(toolCall.function.arguments ?? '{}') as unknown;
 									const result: unknown = tool.invoke
-									? await tool.invoke(args)
-									: tool.call
-									? await tool.call(typeof args === 'object' ? JSON.stringify(args) : args as string)
-									: 'Tool invocation not supported';
+										? await tool.invoke(args)
+										: tool.call
+											? await tool.call(
+													typeof args === 'object' ? JSON.stringify(args) : (args as string),
+												)
+											: 'Tool invocation not supported';
 									toolResult = typeof result === 'string' ? result : JSON.stringify(result);
 								} catch (e) {
 									toolResult = `Error: ${(e as Error).message}`;
