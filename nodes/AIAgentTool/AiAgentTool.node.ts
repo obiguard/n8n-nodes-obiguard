@@ -202,7 +202,7 @@ export class AiAgentTool implements INodeType {
 				displayName: 'Prompt Name or ID',
 				name: 'promptLabel',
 				type: 'options',
-				default: 'promptLabel',
+				default: '',
 				noDataExpression: true,
 				typeOptions: {
 					loadOptionsDependsOn: ['aiAgentId'],
@@ -234,6 +234,7 @@ export class AiAgentTool implements INodeType {
 							singular: 'variable',
 							plural: 'variables',
 						},
+						addAllFields: false,
 						supportAutoMap: false,
 						hideNoDataError: true,
 						allowEmptyValues: true,
