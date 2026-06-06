@@ -426,10 +426,19 @@ export class AiAgentTool implements INodeType {
 				type LcMessage = {
 					_getType(): string;
 					content: string | Array<{ type: string; text?: string }>;
+					additional_kwargs?: {
+						tool_calls?: Array<{
+							id: string;
+							function: { name: string; arguments: string };
+						}>;
+					};
+					tool_call_id?: string;
 				};
 				type Memory = {
-					chatHistory: { getMessages(): Promise<LcMessage[]> };
-					loadMemoryVariables?: (values: Record<string, unknown>) => Promise<Record<string, unknown>>;
+					chatHistory: {
+						getMessages(): Promise<LcMessage[]>;
+						addMessages(messages: unknown[]): Promise<void>;
+					};
 					saveContext(input: Record<string, string>, output: Record<string, string>): Promise<void>;
 				};
 
@@ -443,33 +452,32 @@ export class AiAgentTool implements INodeType {
 
 				let chatHistory: ChatMessage[] = [];
 				if (memory) {
-					let lcMessages: LcMessage[] = [];
-
-					// Use loadMemoryVariables() when available — it applies any window/summary
-					// limits configured on the memory node. chatHistory.getMessages() goes
-					// directly to the underlying store and returns every stored message,
-					// bypassing those limits.
-					if (typeof memory.loadMemoryVariables === 'function') {
-						const vars = await memory.loadMemoryVariables({});
-						const windowed = Object.values(vars).find((v) => Array.isArray(v));
-						if (windowed) {
-							lcMessages = windowed as LcMessage[];
-						}
-					} else {
-						lcMessages = await memory.chatHistory.getMessages();
-					}
+					// Load directly from the storage backend to preserve tool_calls and
+					// tool role messages. Apply the window (k) manually so limits configured
+					// on the memory node are still respected.
+					const allMessages = await memory.chatHistory.getMessages();
+					const k = (memoryRaw as { k?: number }).k;
+					const lcMessages = k !== undefined ? allMessages.slice(-(k * 2)) : allMessages;
 
 					const roleMap: Record<string, string> = { human: 'user', ai: 'assistant' };
-					chatHistory = lcMessages.map((lcMsg) => ({
-						role: roleMap[lcMsg._getType()] ?? lcMsg._getType(),
-						content:
+					chatHistory = lcMessages.map((lcMsg) => {
+						const role = roleMap[lcMsg._getType()] ?? lcMsg._getType();
+						const content =
 							typeof lcMsg.content === 'string'
 								? lcMsg.content
 								: lcMsg.content
 										.filter((c) => c.type === 'text')
 										.map((c) => c.text ?? '')
-										.join(''),
-					}));
+										.join('');
+						const msg: ChatMessage = { role, content };
+						if (lcMsg.additional_kwargs?.tool_calls?.length) {
+							msg.tool_calls = lcMsg.additional_kwargs.tool_calls;
+						}
+						if (lcMsg.tool_call_id) {
+							msg.tool_call_id = lcMsg.tool_call_id;
+						}
+						return msg;
+					});
 				}
 
 				// Populate the output schema in the request
@@ -605,9 +613,33 @@ export class AiAgentTool implements INodeType {
 
 				if (memory) {
 					try {
-						const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
-						const inputSummary = lastUserMsg?.content ?? '(no input)';
-						await memory.saveContext({ input: inputSummary }, { output: content });
+						// Save the full turn — user message + all tool call/result pairs +
+						// final assistant response — so the model sees the correct pattern
+						// when this history is replayed next turn.
+						const newTurnMessages = currentMessages.slice(
+							sysMessages.length + chatHistory.length,
+						);
+						const lcNewMessages = newTurnMessages.map((msg) => {
+							if (msg.role === 'user') {
+								return { _getType: (): string => 'human', content: msg.content };
+							}
+							if (msg.role === 'tool') {
+								return {
+									_getType: (): string => 'tool',
+									content: msg.content,
+									tool_call_id: msg.tool_call_id ?? '',
+								};
+							}
+							// assistant message — may carry tool_calls
+							return {
+								_getType: (): string => 'ai',
+								content: msg.content ?? '',
+								additional_kwargs: msg.tool_calls?.length
+									? { tool_calls: msg.tool_calls }
+									: {},
+							};
+						});
+						await memory.chatHistory.addMessages(lcNewMessages);
 					} catch {
 						// memory persistence is best-effort
 					}
