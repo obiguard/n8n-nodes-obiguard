@@ -28,8 +28,9 @@ export interface AgentDetails {
 		stopSequences: string[];
 		variables: string[];
 	};
-	promptSummary:{
+	prompt:{
 		id: string;
+		nid: string;
 		name: string;
 	}
 	variables: string[];

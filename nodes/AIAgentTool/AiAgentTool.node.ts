@@ -320,9 +320,9 @@ export class AiAgentTool implements INodeType {
 					);
 
 					const details = response as AgentDetails;
-					const summaryName = details.promptSummary?.name ?? '';
+					const promptName = details.prompt?.name ?? '';
 					const versionLabel = details.promptVersion?.label ?? '';
-					const label = `${summaryName} (${versionLabel})`;
+					const label = `${promptName} (${versionLabel})`;
 					return [{ name: label || '(No prompt configured)', value: 'promptLabel' }];
 				} catch {
 					return [{ name: '(Failed to Load)', value: 'none' }];
