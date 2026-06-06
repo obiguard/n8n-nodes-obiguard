@@ -422,30 +422,43 @@ export class AiAgentTool implements INodeType {
 
 				// Read from memory and populate the chatHistory.
 				const memoryRaw = await this.getInputConnectionData(NodeConnectionTypes.AiMemory, i);
+
+				type LcMessage = {
+					_getType(): string;
+					content: string | Array<{ type: string; text?: string }>;
+				};
+				type Memory = {
+					chatHistory: { getMessages(): Promise<LcMessage[]> };
+					loadMemoryVariables?: (values: Record<string, unknown>) => Promise<Record<string, unknown>>;
+					saveContext(input: Record<string, string>, output: Record<string, string>): Promise<void>;
+				};
+
 				const memory =
 					memoryRaw !== null &&
 					typeof memoryRaw === 'object' &&
 					'chatHistory' in memoryRaw &&
 					'saveContext' in memoryRaw
-						? (memoryRaw as {
-								chatHistory: {
-									getMessages(): Promise<
-										Array<{
-											_getType(): string;
-											content: string | Array<{ type: string; text?: string }>;
-										}>
-									>;
-								};
-								saveContext(
-									input: Record<string, string>,
-									output: Record<string, string>,
-								): Promise<void>;
-							})
+						? (memoryRaw as Memory)
 						: undefined;
 
 				let chatHistory: ChatMessage[] = [];
 				if (memory) {
-					const lcMessages = await memory.chatHistory.getMessages();
+					let lcMessages: LcMessage[] = [];
+
+					// Use loadMemoryVariables() when available — it applies any window/summary
+					// limits configured on the memory node. chatHistory.getMessages() goes
+					// directly to the underlying store and returns every stored message,
+					// bypassing those limits.
+					if (typeof memory.loadMemoryVariables === 'function') {
+						const vars = await memory.loadMemoryVariables({});
+						const windowed = Object.values(vars).find((v) => Array.isArray(v));
+						if (windowed) {
+							lcMessages = windowed as LcMessage[];
+						}
+					} else {
+						lcMessages = await memory.chatHistory.getMessages();
+					}
+
 					const roleMap: Record<string, string> = { human: 'user', ai: 'assistant' };
 					chatHistory = lcMessages.map((lcMsg) => ({
 						role: roleMap[lcMsg._getType()] ?? lcMsg._getType(),
