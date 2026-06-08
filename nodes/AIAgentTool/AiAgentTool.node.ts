@@ -9,7 +9,7 @@ import type {
 	INodeTypeDescription,
 	ResourceMapperFields,
 } from 'n8n-workflow';
-import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { Agent, AgentDetails, AgentResponse } from './interfaces';
 import { getInputs, substituteVariables } from './utils';
 
@@ -152,10 +152,10 @@ export class AiAgentTool implements INodeType {
 			name: 'Obiguard AI Agent',
 		},
 		inputs: `={{
-				((hasOutputParser, needsFallback) => {
+				((hasOutputParser) => {
 					${getInputs.toString()};
-					return getInputs(true, hasOutputParser, needsFallback)
-				})($parameter.hasOutputParser === undefined || $parameter.hasOutputParser === true, $parameter.needsFallback !== undefined && $parameter.needsFallback === true)
+					return getInputs(true, hasOutputParser)
+				})($parameter.hasOutputParser === undefined || $parameter.hasOutputParser === true)
 			}}`,
 		outputs: [NodeConnectionTypes.Main],
 		usableAsTool: true,
@@ -252,14 +252,6 @@ export class AiAgentTool implements INodeType {
 				type: 'boolean',
 				default: false,
 				noDataExpression: true,
-			},
-			{
-				displayName: 'Use Fallback Input on Failure',
-				name: 'needsFallback',
-				type: 'boolean',
-				default: false,
-				noDataExpression: true,
-				description: 'When enabled, a second main input appears on the canvas. If the agent call fails, the node returns the data from that fallback connection instead of throwing an error.',
 			},
 			{
 				displayName: `Connect an <a data-action='openSelectiveNodeCreator' data-action-parameter-connectiontype='${NodeConnectionTypes.AiOutputParser}'>output parser</a> on the canvas to specify the output format you require`,
@@ -676,17 +668,6 @@ export class AiAgentTool implements INodeType {
 					pairedItem: { item: i },
 				});
 			} catch (error) {
-				const needsFallback = this.getNodeParameter('needsFallback', i, false) as boolean;
-				if (needsFallback) {
-					// Fallback input is the second main connection (index 1). Return its
-					// data for this item so the workflow continues on the fallback path.
-					const fallbackItems = this.getInputData(1);
-					const fallbackItem = fallbackItems[i] ?? fallbackItems[0];
-					if (fallbackItem) {
-						returnData.push({ ...fallbackItem, pairedItem: { item: i } });
-						continue;
-					}
-				}
 				if (this.continueOnFail()) {
 					returnData.push({
 						json: { error: (error as Error).message },
@@ -694,7 +675,7 @@ export class AiAgentTool implements INodeType {
 					});
 					continue;
 				}
-				throw new NodeApiError(this.getNode(), error, { itemIndex: i });
+				throw new NodeOperationError(this.getNode(), error as Error, { itemIndex: i });
 			}
 		}
 

@@ -16,7 +16,6 @@ import {
 export function getInputs(
 	hasMainInput?: boolean,
 	hasOutputParser?: boolean,
-	needsFallback?: boolean,
 ): Array<NodeConnectionType | INodeInputConfiguration> {
 
 	interface SpecialInput {
@@ -66,9 +65,6 @@ export function getInputs(
 
 	// Note cannot use NodeConnectionType.Main
 	// otherwise expression won't evaluate correctly on the FE
-	const mainInputs: NodeConnectionType[] = hasMainInput ? ['main' as NodeConnectionType] : [];
-	if (needsFallback) {
-		mainInputs.push('main' as NodeConnectionType);
-	}
+	const mainInputs = hasMainInput ? ['main' as NodeConnectionType] : [];
 	return [...mainInputs, ...getInputData(specialInputs)];
 }
