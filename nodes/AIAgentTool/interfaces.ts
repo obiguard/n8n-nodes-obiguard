@@ -17,7 +17,7 @@ export interface AgentDetails {
 		projectName: string;
 		projectDescription: string;
 	};
-	promptVersion: {
+	promptVersion: null | {
 		id: string;
 		nid: string;
 		label: string;
@@ -27,7 +27,7 @@ export interface AgentDetails {
 		maxTokens: number;
 		stopSequences: string[];
 		variables: string[];
-	};
+	} | null;
 	prompt:{
 		id: string;
 		nid: string;

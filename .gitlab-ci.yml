@@ -1,9 +1,31 @@
 stages:
+  - test
   - build
   - publish
 
 default:
   image: node:22
+
+# ── Test ─────────────────────────────────────────────────────────────────────
+# Runs on every push to any branch.
+test:
+  stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}"
+    paths:
+      - node_modules/
+  script:
+    - npm ci
+    - npm run test:coverage
+  coverage: '/Lines\s*:\s*(\d+\.?\d*)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    expire_in: 7 days
 
 # ── Build ────────────────────────────────────────────────────────────────────
 # Runs on every push to main. Lint + compile + publish to GitLab registry.
@@ -12,6 +34,8 @@ build:
   stage: build
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
+  needs:
+    - job: test
   cache:
     key: "${CI_COMMIT_REF_SLUG}"
     paths:

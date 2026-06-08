@@ -11,7 +11,8 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { Agent, AgentDetails, AgentResponse } from './interfaces';
-import { getInputs, substituteVariables } from './utils';
+import { getInputs } from './getInputs';
+import { substituteVariables } from './utils';
 
 interface OutputParser {
 	schema?: unknown;
@@ -247,6 +248,14 @@ export class AiAgentTool implements INodeType {
 				},
 			},
 			{
+				displayName: 'Request Timeout',
+				name: 'requestTimeout',
+				type: 'number',
+				default: 300,
+				description: 'Maximum time in seconds to wait for a response from the agent API. Each tool-call iteration counts as a separate request.',
+				typeOptions: { minValue: 1 },
+			},
+			{
 				displayName: 'Require Specific Output Format',
 				name: 'hasOutputParser',
 				type: 'boolean',
@@ -382,6 +391,7 @@ export class AiAgentTool implements INodeType {
 				const selectedAgent = this.getNodeParameter('aiAgentId', i) as string;
 				const aiAgentId = selectedAgentId(selectedAgent);
 				const hasOutputParser = this.getNodeParameter('hasOutputParser', i, false) as boolean;
+				const requestTimeout = (this.getNodeParameter('requestTimeout', i, 300) as number) * 1000;
 				const credentials = await this.getCredentials('obiguardApi');
 				const hostUrl = credentials.hostUrl as string;
 
@@ -405,8 +415,17 @@ export class AiAgentTool implements INodeType {
 						url: `/v1/ai-agents/${aiAgentId}`,
 						baseURL: hostUrl,
 						returnFullResponse: false,
+						timeout: requestTimeout,
 					},
 				)) as AgentDetails;
+
+				if (!agentDetails.promptVersion) {
+					throw new NodeOperationError(
+						this.getNode(),
+						`Agent "${aiAgentId}" has no configured prompt version. Configure a prompt in the Obiguard portal before using this agent.`,
+						{ itemIndex: i },
+					);
+				}
 
 				// Construct messages using promptVersion.
 				const messages: ChatMessage[] = [];
@@ -457,7 +476,13 @@ export class AiAgentTool implements INodeType {
 					// on the memory node are still respected.
 					const allMessages = await memory.chatHistory.getMessages();
 					const k = (memoryRaw as { k?: number }).k;
-					const lcMessages = k !== undefined ? allMessages.slice(-(k * 2)) : allMessages;
+					let lcMessages = k !== undefined ? allMessages.slice(-(k * 2)) : allMessages;
+					// If a previous run errored mid-turn the history may have an odd number of
+					// messages, leaving a non-human message at the start after slicing. Drop it
+					// so the context always begins on a clean human turn.
+					if (lcMessages.length > 0 && lcMessages[0]._getType() !== 'human') {
+						lcMessages = lcMessages.slice(1);
+					}
 
 					const roleMap: Record<string, string> = { human: 'user', ai: 'assistant' };
 					chatHistory = lcMessages.map((lcMsg) => {
@@ -567,6 +592,7 @@ export class AiAgentTool implements INodeType {
 							body,
 							json: true,
 							returnFullResponse: false,
+							timeout: requestTimeout,
 						},
 					);
 					const completion = Array.isArray(response)
@@ -582,19 +608,15 @@ export class AiAgentTool implements INodeType {
 							const tool = lcTools.find((t: LcTool) => t.name === toolCall.function.name);
 							let toolResult: string;
 							if (tool) {
-								try {
-									const args = JSON.parse(toolCall.function.arguments ?? '{}') as unknown;
-									const result: unknown = tool.invoke
-										? await tool.invoke(args)
-										: tool.call
-											? await tool.call(
-													typeof args === 'object' ? JSON.stringify(args) : (args as string),
-												)
-											: 'Tool invocation not supported';
-									toolResult = typeof result === 'string' ? result : JSON.stringify(result);
-								} catch (e) {
-									toolResult = `Error: ${(e as Error).message}`;
-								}
+								const args = JSON.parse(toolCall.function.arguments ?? '{}') as unknown;
+								const result: unknown = tool.invoke
+									? await tool.invoke(args)
+									: tool.call
+										? await tool.call(
+												typeof args === 'object' ? JSON.stringify(args) : (args as string),
+											)
+										: (() => { throw new NodeOperationError(this.getNode(), `Tool "${toolCall.function.name}" does not expose an invoke or call method`, { itemIndex: i }); })();
+								toolResult = typeof result === 'string' ? result : JSON.stringify(result);
 							} else {
 								toolResult = `Unknown tool: ${toolCall.function.name}`;
 							}
@@ -635,7 +657,7 @@ export class AiAgentTool implements INodeType {
 						// final assistant response — so the model sees the correct pattern
 						// when this history is replayed next turn.
 						const newTurnMessages = currentMessages.slice(
-							sysMessages.length + chatHistory.length + nonSysMessages.length,
+							sysMessages.length + chatHistory.length,
 						);
 						const lcNewMessages = newTurnMessages.map((msg) => {
 							if (msg.role === 'user') {
