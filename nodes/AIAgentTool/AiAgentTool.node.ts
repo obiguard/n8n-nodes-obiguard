@@ -254,6 +254,14 @@ export class AiAgentTool implements INodeType {
 				noDataExpression: true,
 			},
 			{
+				displayName: 'Use Fallback Input on Failure',
+				name: 'needsFallback',
+				type: 'boolean',
+				default: false,
+				noDataExpression: true,
+				description: 'When enabled, a second main input appears on the canvas. If the agent call fails, the node returns the data from that fallback connection instead of throwing an error.',
+			},
+			{
 				displayName: `Connect an <a data-action='openSelectiveNodeCreator' data-action-parameter-connectiontype='${NodeConnectionTypes.AiOutputParser}'>output parser</a> on the canvas to specify the output format you require`,
 				name: 'notice',
 				type: 'notice',
@@ -543,8 +551,7 @@ export class AiAgentTool implements INodeType {
 				const nonSysMessages = messages.filter((m) => m.role !== 'system');
 				const currentMessages: ChatMessage[] = [...sysMessages, ...chatHistory, ...nonSysMessages];
 
-				const requestId = randomUUID();
-				const traceId = requestId.replace(/-/g, '');
+				const traceId = randomUUID().replace(/-/g, '');
 				const parentId = randomUUID().replace(/-/g, '').slice(0, 16);
 				const traceparent = `00-${traceId}-${parentId}-01`;
 				let content = '';
@@ -564,7 +571,7 @@ export class AiAgentTool implements INodeType {
 							method: 'POST',
 							url: `/v1/ai-agents/${aiAgentId}`,
 							baseURL: hostUrl,
-							headers: { 'x-request-id': requestId, traceparent },
+							headers: { 'x-request-id': randomUUID(), traceparent },
 							body,
 							json: true,
 							returnFullResponse: false,
@@ -606,7 +613,14 @@ export class AiAgentTool implements INodeType {
 							});
 						}
 					} else {
-						content = choice?.message?.content ?? '';
+						if (!choice) {
+							throw new NodeOperationError(
+								this.getNode(),
+								'Agent API returned no choices in response',
+								{ itemIndex: i },
+							);
+						}
+						content = choice.message?.content ?? '';
 						currentMessages.push({ role: 'assistant', content });
 						reachedFinalResponse = true;
 						break;
@@ -662,6 +676,17 @@ export class AiAgentTool implements INodeType {
 					pairedItem: { item: i },
 				});
 			} catch (error) {
+				const needsFallback = this.getNodeParameter('needsFallback', i, false) as boolean;
+				if (needsFallback) {
+					// Fallback input is the second main connection (index 1). Return its
+					// data for this item so the workflow continues on the fallback path.
+					const fallbackItems = this.getInputData(1);
+					const fallbackItem = fallbackItems[i] ?? fallbackItems[0];
+					if (fallbackItem) {
+						returnData.push({ ...fallbackItem, pairedItem: { item: i } });
+						continue;
+					}
+				}
 				if (this.continueOnFail()) {
 					returnData.push({
 						json: { error: (error as Error).message },
