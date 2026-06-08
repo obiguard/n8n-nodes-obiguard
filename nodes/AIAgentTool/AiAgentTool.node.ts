@@ -545,8 +545,10 @@ export class AiAgentTool implements INodeType {
 
 				const requestId = randomUUID();
 				const traceId = requestId.replace(/-/g, '');
-				const traceparent = `00-${traceId}-${traceId.slice(0, 16)}-01`;
+				const parentId = randomUUID().replace(/-/g, '').slice(0, 16);
+				const traceparent = `00-${traceId}-${parentId}-01`;
 				let content = '';
+				let reachedFinalResponse = false;
 				const MAX_TOOL_ITERATIONS = 10;
 
 				for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
@@ -605,8 +607,18 @@ export class AiAgentTool implements INodeType {
 						}
 					} else {
 						content = choice?.message?.content ?? '';
+						currentMessages.push({ role: 'assistant', content });
+						reachedFinalResponse = true;
 						break;
 					}
+				}
+
+				if (!reachedFinalResponse) {
+					throw new NodeOperationError(
+						this.getNode(),
+						`Agent did not produce a final response after ${MAX_TOOL_ITERATIONS} tool call iterations`,
+						{ itemIndex: i },
+					);
 				}
 
 				const json = parser ? await parser.parse(content) : { output: content };
@@ -617,7 +629,7 @@ export class AiAgentTool implements INodeType {
 						// final assistant response — so the model sees the correct pattern
 						// when this history is replayed next turn.
 						const newTurnMessages = currentMessages.slice(
-							sysMessages.length + chatHistory.length,
+							sysMessages.length + chatHistory.length + nonSysMessages.length,
 						);
 						const lcNewMessages = newTurnMessages.map((msg) => {
 							if (msg.role === 'user') {
