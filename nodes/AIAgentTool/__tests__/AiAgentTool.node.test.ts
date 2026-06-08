@@ -61,10 +61,24 @@ describe('basic execution', () => {
 		expect(userMsg.content).toBe('Hello Alice');
 	});
 
-	it('applies the requestTimeout to every HTTP call', async () => {
+	it('uses the default 300s timeout when useCustomTimeout is false', async () => {
 		const instance = getInstance();
 		const ctx = makeMockExecute({
-			parameters: { aiAgentId: AGENT_ID, requestTimeout: 60 },
+			parameters: { aiAgentId: AGENT_ID, useCustomTimeout: false },
+			httpResponses: [DEFAULT_AGENT_DETAILS, makeCompletion('ok')],
+		});
+		await instance.execute.call(ctx);
+
+		const calls = (ctx.helpers.httpRequestWithAuthentication.call as jest.Mock).mock.calls;
+		for (const call of calls) {
+			expect(call[2].timeout).toBe(300_000);
+		}
+	});
+
+	it('applies the custom requestTimeout when useCustomTimeout is true', async () => {
+		const instance = getInstance();
+		const ctx = makeMockExecute({
+			parameters: { aiAgentId: AGENT_ID, useCustomTimeout: true, requestTimeout: 60 },
 			httpResponses: [DEFAULT_AGENT_DETAILS, makeCompletion('ok')],
 		});
 		await instance.execute.call(ctx);

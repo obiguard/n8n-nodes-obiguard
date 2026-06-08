@@ -248,12 +248,25 @@ export class AiAgentTool implements INodeType {
 				},
 			},
 			{
-				displayName: 'Request Timeout',
+				displayName: 'Custom Request Timeout',
+				name: 'useCustomTimeout',
+				type: 'boolean',
+				default: false,
+				noDataExpression: true,
+				description: 'Whether to override the default 300-second request timeout',
+			},
+			{
+				displayName: 'Request Timeout (Seconds)',
 				name: 'requestTimeout',
 				type: 'number',
 				default: 300,
 				description: 'Maximum time in seconds to wait for a response from the agent API. Each tool-call iteration counts as a separate request.',
 				typeOptions: { minValue: 1 },
+				displayOptions: {
+					show: {
+						useCustomTimeout: [true],
+					},
+				},
 			},
 			{
 				displayName: 'Require Specific Output Format',
@@ -391,7 +404,10 @@ export class AiAgentTool implements INodeType {
 				const selectedAgent = this.getNodeParameter('aiAgentId', i) as string;
 				const aiAgentId = selectedAgentId(selectedAgent);
 				const hasOutputParser = this.getNodeParameter('hasOutputParser', i, false) as boolean;
-				const requestTimeout = (this.getNodeParameter('requestTimeout', i, 300) as number) * 1000;
+				const useCustomTimeout = this.getNodeParameter('useCustomTimeout', i, false) as boolean;
+				const requestTimeout = (useCustomTimeout
+					? (this.getNodeParameter('requestTimeout', i, 300) as number)
+					: 300) * 1000;
 				const credentials = await this.getCredentials('obiguardApi');
 				const hostUrl = credentials.hostUrl as string;
 

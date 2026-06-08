@@ -71,6 +71,7 @@ export function makeMockMemory(initialMessages: Array<{ type: string; content: s
 
 type NodeParameters = {
 	aiAgentId?: string;
+	useCustomTimeout?: boolean;
 	requestTimeout?: number;
 	hasOutputParser?: boolean;
 	variables?: { value: Record<string, string> | null };
@@ -93,6 +94,7 @@ export function makeMockExecute(options: {
 
 	const params: NodeParameters = {
 		aiAgentId: AGENT_ID,
+		useCustomTimeout: false,
 		requestTimeout: 300,
 		hasOutputParser: false,
 		variables: { value: {} },
