@@ -53,9 +53,11 @@ build:
 
 # ── Publish ──────────────────────────────────────────────────────────────────
 # Manual gate. Requires the build job to have passed.
-# Creates a git tag and pushes ONLY that tag to GitHub.
-# GitHub Actions (.github/workflows/publish.yml) then handles npm publish
-# with provenance, triggered by the tag push.
+# Bumps the patch version, strips .gitlab-ci.yml, and pushes the result to
+# GitHub's main branch (this commit/bump is NOT pushed back to GitLab — it
+# only ever exists on the GitHub mirror).
+# GitHub Actions (.github/workflows/publish.yml) then tags the new version
+# and handles npm publish with provenance, triggered by the push to main.
 #
 # Required CI/CD variables (Settings → CI/CD → Variables):
 #   GITHUB_TOKEN — GitHub personal access token with repo scope (mark as masked)
@@ -71,8 +73,14 @@ publish:
     - git config user.name "Obiguard CI"
     - git config user.email "support@obiguard.com"
   script:
-    # Push source to GitHub. This triggers the GitHub Actions publish
-    # workflow which publishes to npm with provenance.
+    # Bump the patch version (package.json + package-lock.json). This commit
+    # only exists locally on the runner and is never pushed back to GitLab.
+    - npm version patch --no-git-tag-version
+    # Don't ship the GitLab CI config to the public GitHub mirror.
+    - git rm -f .gitlab-ci.yml
+    - git commit -am "chore: release v$(node -p "require('./package.json').version")"
+    # Push to GitHub. This triggers the GitHub Actions publish workflow,
+    # which tags the bumped version and publishes to npm with provenance.
     - git remote add github "https://x-access-token:${GITHUB_TOKEN}@github.com/obiguard/n8n-nodes-obiguard.git"
     - git push github HEAD:refs/heads/main --force
   environment:
