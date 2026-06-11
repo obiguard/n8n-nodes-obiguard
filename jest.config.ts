@@ -10,7 +10,7 @@ const config: Config = {
 		'!nodes/**/__tests__/**',
 		'!nodes/**/*.d.ts',
 	],
-	coverageReporters: ['text', 'lcov'],
+	coverageReporters: ['text', 'lcov', 'cobertura'],
 	coverageThreshold: {
 		global: {
 			lines: 80,

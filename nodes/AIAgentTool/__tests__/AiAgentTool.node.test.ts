@@ -6,6 +6,7 @@ import {
 	makeToolCallCompletion,
 	DEFAULT_AGENT_DETAILS,
 	AGENT_ID,
+	ZOD_OBJECT_SCHEMA,
 } from './helpers';
 
 function getInstance() {
@@ -151,6 +152,63 @@ describe('memory', () => {
 		expect(msgs.some((m) => m.content === 'Clean turn')).toBe(true);
 	});
 
+	it('reconstructs history from multi-block content, tool_calls, and tool_call_id', async () => {
+		const instance = getInstance();
+		const memory = makeMockMemory([
+			{ type: 'human', content: 'Earlier question' },
+			{
+				type: 'ai',
+				content: [
+					{ type: 'text', text: 'Earlier ' },
+					{ type: 'text', text: 'answer' },
+				],
+				additional_kwargs: {
+					tool_calls: [{ id: 'tc-0', function: { name: 'lookup', arguments: '{}' } }],
+				},
+			},
+			{ type: 'tool', content: 'lookup result', tool_call_id: 'tc-0' },
+		]);
+		const ctx = makeMockExecute({
+			memory,
+			httpResponses: [DEFAULT_AGENT_DETAILS, makeCompletion('ok')],
+		});
+		await instance.execute.call(ctx);
+
+		const postCall = (ctx.helpers.httpRequestWithAuthentication.call as jest.Mock).mock.calls[1][2];
+		const msgs: Array<{ role: string; content: string; tool_calls?: unknown; tool_call_id?: string }> =
+			postCall.body.messages;
+
+		const aiMsg = msgs.find((m) => m.content === 'Earlier answer');
+		expect(aiMsg?.tool_calls).toEqual([{ id: 'tc-0', function: { name: 'lookup', arguments: '{}' } }]);
+
+		const toolMsg = msgs.find((m) => m.role === 'tool');
+		expect(toolMsg?.tool_call_id).toBe('tc-0');
+	});
+
+	it('persists every message type — including tool results — via toDict()', async () => {
+		const instance = getInstance();
+		const memory = makeMockMemory();
+		const toolInvoke = jest.fn().mockResolvedValue('tool result value');
+		const mockTool = { name: 'myTool', description: 'does stuff', invoke: toolInvoke };
+
+		await runNode(instance, {
+			memory,
+			tools: [mockTool],
+			httpResponses: [
+				DEFAULT_AGENT_DETAILS,
+				makeToolCallCompletion('myTool', { arg: 'value' }),
+				makeCompletion('Final answer'),
+			],
+		});
+
+		expect(memory.chatHistory.addMessages).toHaveBeenCalledTimes(1);
+		const saved: Array<{ _getType: () => string; toDict: () => { type: string } }> =
+			memory.chatHistory.addMessages.mock.calls[0][0];
+
+		expect(saved.map((m) => m._getType())).toEqual(['human', 'ai', 'tool', 'ai']);
+		expect(saved.map((m) => m.toDict().type)).toEqual(['human', 'ai', 'tool', 'ai']);
+	});
+
 	it('does not save nonSysMessages multiple times across turns', async () => {
 		const instance = getInstance();
 		const memory = makeMockMemory();
@@ -235,6 +293,61 @@ describe('tool call loop', () => {
 		);
 	});
 
+	it('expands toolkits exposing getTools() and a plain tools[] array', async () => {
+		const instance = getInstance();
+		const toolFromGetTools = {
+			name: 'fromGetTools',
+			description: 'via getTools()',
+			invoke: jest.fn().mockResolvedValue('a'),
+		};
+		const toolFromArray = {
+			name: 'fromArray',
+			description: 'via tools[]',
+			invoke: jest.fn().mockResolvedValue('b'),
+		};
+		const getToolsToolkit = { getTools: () => [toolFromGetTools] };
+		const arrayToolkit = { tools: [toolFromArray] };
+
+		const ctx = makeMockExecute({
+			tools: [getToolsToolkit, arrayToolkit],
+			httpResponses: [DEFAULT_AGENT_DETAILS, makeCompletion('ok')],
+		});
+		await instance.execute.call(ctx);
+
+		const postCall = (ctx.helpers.httpRequestWithAuthentication.call as jest.Mock).mock.calls[1][2];
+		const toolNames = postCall.body.tools.map((t: { function: { name: string } }) => t.function.name);
+		expect(toolNames).toEqual(['fromGetTools', 'fromArray']);
+	});
+
+	it('responds with "Unknown tool" when the model calls a tool that is not connected', async () => {
+		const instance = getInstance();
+		const ctx = makeMockExecute({
+			httpResponses: [
+				DEFAULT_AGENT_DETAILS,
+				makeToolCallCompletion('missingTool', {}),
+				makeCompletion('done'),
+			],
+		});
+		await instance.execute.call(ctx);
+
+		const postCalls = (ctx.helpers.httpRequestWithAuthentication.call as jest.Mock).mock.calls.slice(1);
+		const secondRequestMsgs = postCalls[1][2].body.messages;
+		const toolMsg = secondRequestMsgs.find((m: { role: string }) => m.role === 'tool');
+		expect(toolMsg?.content).toBe('Unknown tool: missingTool');
+	});
+
+	it('throws when a connected tool exposes neither invoke nor call', async () => {
+		const instance = getInstance();
+		const noInvokeTool = { name: 'noInvoke', description: 'no methods' };
+		const ctx = makeMockExecute({
+			tools: [noInvokeTool],
+			httpResponses: [DEFAULT_AGENT_DETAILS, makeToolCallCompletion('noInvoke', {})],
+		});
+		await expect(instance.execute.call(ctx)).rejects.toThrow(
+			/does not expose an invoke or call method/i,
+		);
+	});
+
 	it('throws when a tool invocation fails', async () => {
 		const instance = getInstance();
 		const brokenTool = {
@@ -250,6 +363,72 @@ describe('tool call loop', () => {
 			],
 		});
 		await expect(instance.execute.call(ctx)).rejects.toThrow(/tool exploded/i);
+	});
+});
+
+// ── Output parser ─────────────────────────────────────────────────────────────
+
+describe('output parser', () => {
+	it('translates a zod schema to an inline JSON schema and parses the result', async () => {
+		const instance = getInstance();
+		const parse = jest.fn().mockResolvedValue({ name: 'Alice' });
+		const ctx = makeMockExecute({
+			parameters: { hasOutputParser: true },
+			outputParser: { schema: ZOD_OBJECT_SCHEMA, parse },
+			httpResponses: [DEFAULT_AGENT_DETAILS, makeCompletion('{"name":"Alice"}')],
+		});
+		await instance.execute.call(ctx);
+
+		const postCall = (ctx.helpers.httpRequestWithAuthentication.call as jest.Mock).mock.calls[1][2];
+		expect(postCall.body.outputSchema).toMatchObject({
+			type: 'object',
+			properties: {
+				name: { type: 'string' },
+				age: { type: 'number' },
+				active: { type: 'boolean' },
+				tags: { type: 'array', items: { type: 'string' } },
+				role: { type: 'string', enum: ['admin', 'user'] },
+				kind: { type: 'string', enum: ['fixed'] },
+				note: { type: 'string' },
+				extra: {},
+			},
+			required: ['name', 'active', 'tags', 'role', 'kind', 'extra'],
+		});
+		expect(parse).toHaveBeenCalledWith('{"name":"Alice"}');
+	});
+
+	it('extracts a JSON schema from formattingInstructions when no zod schema is present', async () => {
+		const instance = getInstance();
+		const parse = jest.fn().mockResolvedValue({ ok: true });
+		const formatInstructions = [
+			'Respond using this schema:',
+			'```json',
+			JSON.stringify({ $schema: 'http://json-schema.org/draft-07/schema#', type: 'object' }),
+			'```',
+		].join('\n');
+		const ctx = makeMockExecute({
+			parameters: { hasOutputParser: true },
+			outputParser: { getFormatInstructions: () => formatInstructions, parse },
+			httpResponses: [DEFAULT_AGENT_DETAILS, makeCompletion('{"ok":true}')],
+		});
+		await instance.execute.call(ctx);
+
+		const postCall = (ctx.helpers.httpRequestWithAuthentication.call as jest.Mock).mock.calls[1][2];
+		expect(postCall.body.outputSchema).toEqual({ type: 'object' });
+	});
+
+	it('proceeds without a structured schema when formattingInstructions has no JSON block', async () => {
+		const instance = getInstance();
+		const parse = jest.fn().mockResolvedValue({ ok: true });
+		const ctx = makeMockExecute({
+			parameters: { hasOutputParser: true },
+			outputParser: { getFormatInstructions: () => 'Just respond in plain text.', parse },
+			httpResponses: [DEFAULT_AGENT_DETAILS, makeCompletion('plain text')],
+		});
+		await instance.execute.call(ctx);
+
+		const postCall = (ctx.helpers.httpRequestWithAuthentication.call as jest.Mock).mock.calls[1][2];
+		expect(postCall.body.outputSchema).toBeUndefined();
 	});
 });
 
