@@ -677,22 +677,32 @@ export class AiAgentTool implements INodeType {
 						);
 						const lcNewMessages = newTurnMessages.map((msg) => {
 							if (msg.role === 'user') {
-								return { _getType: (): string => 'human', content: msg.content };
+								const data = { content: msg.content };
+								return {
+									_getType: (): string => 'human',
+									...data,
+									toDict: () => ({ type: 'human', data }),
+								};
 							}
 							if (msg.role === 'tool') {
+								const data = { content: msg.content, tool_call_id: msg.tool_call_id ?? '' };
 								return {
 									_getType: (): string => 'tool',
-									content: msg.content,
-									tool_call_id: msg.tool_call_id ?? '',
+									...data,
+									toDict: () => ({ type: 'tool', data }),
 								};
 							}
 							// assistant message — may carry tool_calls
-							return {
-								_getType: (): string => 'ai',
+							const data = {
 								content: msg.content ?? '',
 								additional_kwargs: msg.tool_calls?.length
 									? { tool_calls: msg.tool_calls }
 									: {},
+							};
+							return {
+								_getType: (): string => 'ai',
+								...data,
+								toDict: () => ({ type: 'ai', data }),
 							};
 						});
 						await memory.chatHistory.addMessages(lcNewMessages);
