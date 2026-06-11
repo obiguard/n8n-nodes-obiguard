@@ -78,7 +78,8 @@ publish:
     - npm version patch --no-git-tag-version
     # Don't ship the GitLab CI config to the public GitHub mirror.
     - git rm -f .gitlab-ci.yml
-    - git commit -am "chore: release v$(node -p "require('./package.json').version")"
+    - export RELEASE_VERSION=$(node -p "require('./package.json').version")
+    - 'git commit -am "chore: release v${RELEASE_VERSION}"'
     # Push to GitHub. This triggers the GitHub Actions publish workflow,
     # which tags the bumped version and publishes to npm with provenance.
     - git remote add github "https://x-access-token:${GITHUB_TOKEN}@github.com/obiguard/n8n-nodes-obiguard.git"
