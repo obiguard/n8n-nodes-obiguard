@@ -37,15 +37,22 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+      # Publishes via npm Trusted Publishing (OIDC) — no NPM_TOKEN needed.
+      # Requires npm >= 11.5.1 (Node 22 ships npm 10).
+      - run: npm install -g npm@latest
+      - run: npm publish --access public --provenance --ignore-scripts
+
+      # Tag only after a successful publish, so a failed publish can be re-run
+      # without tripping over a tag left behind by the previous attempt.
       - name: Tag release
         run: |
           VERSION=$(node -p "require('./package.json').version")
           TAG="v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null; then
+            echo "Tag ${TAG} already exists, skipping"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "${TAG}" -m "Release ${TAG}"
           git push origin "${TAG}"
-
-      - run: npm publish --access public --provenance --ignore-scripts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
