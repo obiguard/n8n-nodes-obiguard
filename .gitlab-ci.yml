@@ -74,8 +74,20 @@ publish:
     - git config user.email "support@obiguard.com"
   script:
     # Bump the patch version (package.json + package-lock.json). This commit
-    # only exists locally on the runner and is never pushed back to GitLab.
-    - npm version patch --no-git-tag-version
+    # only exists locally on the runner and is never pushed back to GitLab,
+    # so the bump is based on the latest version published to npm rather than
+    # package.json (which would otherwise produce the same version every time).
+    # If package.json has been manually set higher (e.g. a minor/major bump),
+    # that version is used as-is.
+    - PUBLISHED_VERSION=$(npm view @obiguard/n8n-nodes-obiguard version)
+    - LOCAL_VERSION=$(node -p "require('./package.json').version")
+    - |
+      if [ "$LOCAL_VERSION" != "$PUBLISHED_VERSION" ] && [ "$(printf '%s\n%s\n' "$PUBLISHED_VERSION" "$LOCAL_VERSION" | sort -V | tail -n1)" = "$LOCAL_VERSION" ]; then
+        echo "Using manually set version ${LOCAL_VERSION}"
+      else
+        npm version "$PUBLISHED_VERSION" --no-git-tag-version --allow-same-version
+        npm version patch --no-git-tag-version
+      fi
     # Don't ship the GitLab CI config to the public GitHub mirror.
     - git rm -f .gitlab-ci.yml
     - export RELEASE_VERSION=$(node -p "require('./package.json').version")
