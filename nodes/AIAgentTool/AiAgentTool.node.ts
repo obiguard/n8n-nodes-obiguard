@@ -492,7 +492,9 @@ export class AiAgentTool implements INodeType {
 					// on the memory node are still respected.
 					const allMessages = await memory.chatHistory.getMessages();
 					const k = (memoryRaw as { k?: number }).k;
-					let lcMessages = k !== undefined ? allMessages.slice(-(k * 2)) : allMessages;
+					// k <= 0 means no history. Guard it explicitly: slice(-0) would return everything.
+					let lcMessages =
+						k === undefined ? allMessages : k <= 0 ? [] : allMessages.slice(-(k * 2));
 					// If a previous run errored mid-turn the history may have an odd number of
 					// messages, leaving a non-human message at the start after slicing. Drop it
 					// so the context always begins on a clean human turn.

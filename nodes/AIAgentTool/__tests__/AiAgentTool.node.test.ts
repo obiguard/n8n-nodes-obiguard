@@ -132,6 +132,52 @@ describe('memory', () => {
 		expect(types).toContain('ai');    // assistant response was saved
 	});
 
+	it('sends no chat history when the memory window (k) is 0', async () => {
+		const instance = getInstance();
+		const memory = {
+			...makeMockMemory([
+				{ type: 'human', content: 'Previous question' },
+				{ type: 'ai', content: 'Previous answer' },
+			]),
+			k: 0,
+		};
+		const ctx = makeMockExecute({
+			memory,
+			httpResponses: [DEFAULT_AGENT_DETAILS, makeCompletion('ok')],
+		});
+		await instance.execute.call(ctx);
+
+		const postCall = (ctx.helpers.httpRequestWithAuthentication.call as jest.Mock).mock.calls[1][2];
+		const msgs: Array<{ role: string; content: string }> = postCall.body.messages;
+		expect(msgs.some((m) => m.content === 'Previous question')).toBe(false);
+		expect(msgs.some((m) => m.content === 'Previous answer')).toBe(false);
+	});
+
+	it('keeps only the last k turns of chat history', async () => {
+		const instance = getInstance();
+		const memory = {
+			...makeMockMemory([
+				{ type: 'human', content: 'Old question' },
+				{ type: 'ai', content: 'Old answer' },
+				{ type: 'human', content: 'Recent question' },
+				{ type: 'ai', content: 'Recent answer' },
+			]),
+			k: 1,
+		};
+		const ctx = makeMockExecute({
+			memory,
+			httpResponses: [DEFAULT_AGENT_DETAILS, makeCompletion('ok')],
+		});
+		await instance.execute.call(ctx);
+
+		const postCall = (ctx.helpers.httpRequestWithAuthentication.call as jest.Mock).mock.calls[1][2];
+		const msgs: Array<{ role: string; content: string }> = postCall.body.messages;
+		expect(msgs.some((m) => m.content === 'Old question')).toBe(false);
+		expect(msgs.some((m) => m.content === 'Old answer')).toBe(false);
+		expect(msgs.some((m) => m.content === 'Recent question')).toBe(true);
+		expect(msgs.some((m) => m.content === 'Recent answer')).toBe(true);
+	});
+
 	it('drops an orphaned leading message after the k-window slice', async () => {
 		const instance = getInstance();
 		// Odd history: ai message without a preceding human — simulates a mid-turn failure
